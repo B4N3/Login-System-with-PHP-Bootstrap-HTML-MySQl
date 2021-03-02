@@ -1,86 +1,171 @@
-<?php include 'User.php';?>
-<?php require 'head.php'; ?>
 <?php
-    //$filepath = realpath(dirname(__FILE__));
-    //include_once 'Session.php';
-    Session::checkSession();
-    //Session::init();
-    $user = new User();
-    $loginMessage = Session::get("loginMessage");
 
-    if(isset($loginMessage))
-    {
-        echo $loginMessage;
-    }
-?>
-<?php
-if(isset($_GET['action']) && $_GET['action'] == "logout")
+$api = new RedeemAPI;
+$api->redeem();
+// Helper method to get a string description for an HTTP status code
+// From http://www.gen-x-design.com/archives/create-a-rest-api-with-php/ 
+function getStatusCodeMessage($status)
 {
-    Session::sessionDestroy();
+    // these could be stored in a .ini file and loaded
+    // via parse_ini_file()... however, this will suffice
+    // for an example
+    $codes = Array(
+        100 => 'Continue',
+        101 => 'Switching Protocols',
+        200 => 'OK',
+        201 => 'Created',
+        202 => 'Accepted',
+        203 => 'Non-Authoritative Information',
+        204 => 'No Content',
+        205 => 'Reset Content',
+        206 => 'Partial Content',
+        300 => 'Multiple Choices',
+        301 => 'Moved Permanently',
+        302 => 'Found',
+        303 => 'See Other',
+        304 => 'Not Modified',
+        305 => 'Use Proxy',
+        306 => '(Unused)',
+        307 => 'Temporary Redirect',
+        400 => 'Bad Request',
+        401 => 'Unauthorized',
+        402 => 'Payment Required',
+        403 => 'Forbidden',
+        404 => 'Not Found',
+        405 => 'Method Not Allowed',
+        406 => 'Not Acceptable',
+        407 => 'Proxy Authentication Required',
+        408 => 'Request Timeout',
+        409 => 'Conflict',
+        410 => 'Gone',
+        411 => 'Length Required',
+        412 => 'Precondition Failed',
+        413 => 'Request Entity Too Large',
+        414 => 'Request-URI Too Long',
+        415 => 'Unsupported Media Type',
+        416 => 'Requested Range Not Satisfiable',
+        417 => 'Expectation Failed',
+        500 => 'Internal Server Error',
+        501 => 'Not Implemented',
+        502 => 'Bad Gateway',
+        503 => 'Service Unavailable',
+        504 => 'Gateway Timeout',
+        505 => 'HTTP Version Not Supported'
+    );
+
+    return (isset($codes[$status])) ? $codes[$status] : '';
 }
+
+// Helper method to send a HTTP response code/message
+function sendResponse($status = 200, $body = '', $content_type = 'text/html')
+{
+    $status_header = 'HTTP/1.1 ' . $status . ' ' . getStatusCodeMessage($status);
+    header($status_header);
+    header('Content-type: ' . $content_type);
+    echo $body;
+}
+
+class RedeemAPI {
+    private $db;
+
+    // Constructor - open DB connection
+    function __construct() {
+        $this->db = new mysqli('172.106.0.120:3306', 'rest2', 'Rodrigo1', 'rest1');
+        $this->db->autocommit(FALSE);
+    }
+
+    // Destructor - close DB connection
+    function __destruct() {
+        $this->db->close();
+    }
+
+    // Main method to redeem a code
+function redeem() {
+
+    // Check for required parameters
+    if (isset($_GET["rw_app_id"]) && isset($_GET["code"]) && isset($_GET["device_id"])) {
+    
+        // Put parameters into local variables
+        $rw_app_id = $_GET["rw_app_id"];
+        $code = $_GET["code"];
+        $device_id = $_GET["device_id"];;
+        
+        // Look up code in database
+        $user_id = 0;
+        $stmt = $this->db->prepare('SELECT id, unlock_code, uses_remaining FROM rw_promo_code WHERE rw_app_id=? AND code=?');
+        $stmt->bind_param("is", $rw_app_id, $code);
+        $stmt->execute();
+        $stmt->bind_result($id, $unlock_code, $uses_remaining);
+        while ($stmt->fetch()) {
+            break;
+        }
+        $stmt->close();
+        
+        // Bail if code doesn't exist
+        if ($id <= 0) {
+            sendResponse(400, 'Invalid code');
+            return false;
+        }
+        
+        // Bail if code already used		
+        if ($uses_remaining <= 0) {
+            sendResponse(403, 'Code already used');
+            return false;
+        }	
+        
+        // Check to see if this device already redeemed	
+        $stmt = $this->db->prepare('SELECT id FROM rw_promo_code_redeemed WHERE device_id=? AND rw_promo_code_id=?');
+        $stmt->bind_param("si", $device_id, $id);
+        $stmt->execute();
+        $stmt->bind_result($redeemed_id);
+        while ($stmt->fetch()) {
+            break;
+        }
+        $stmt->close();
+        
+        // Bail if code already redeemed
+        if ($redeemed_id > 0) {
+            sendResponse(403, 'Code already used');
+            return false;
+        }
+        
+        // Add tracking of redemption
+        $stmt = $this->db->prepare("INSERT INTO rw_promo_code_redeemed (rw_promo_code_id, device_id) VALUES (?, ?)");
+        $stmt->bind_param("is", $id, $device_id);
+        $stmt->execute();
+        $stmt->close();
+        
+        // Decrement use of code
+        $this->db->query("UPDATE rw_promo_code SET uses_remaining=uses_remaining-1 WHERE id=$id");
+        $this->db->commit();
+        
+        // Return unlock code, encoded with JSON
+        $result = array(
+            "unlock_code" => $unlock_code,
+        );
+        sendResponse(200, json_encode($result));
+        return true;
+    }
+    sendResponse(400, 'Invalid request');
+    return false;
+
+}
+
+}
+//
+
+//class RedeemAPI {
+    // Main method to redeem a code
+  //  function redeem() {
+      //  echo "Hello, PHP!";
+  //  }
+//}
+
+// This is the first thing that gets called when this page is loaded
+// Creates a new instance of the RedeemAPI class and calls the redeem method
+
+
 ?>
-    <div class="container">
-        <div class="row">
-            <div class="panel-default panel">
-                <div class="page-header">
-                    <h3 class="text-capitalize" style="position: relative; left: 10px">  user list <span class="pull-right" style="position: relative; right: 20px"><strong>WELCOME </strong>
-                            <span class="text-info">
-                        <?php
-                            $userNane = Session::get("name");
-                            if(isset($userNane))
-                            {
-                                echo " ".$userNane;
-                            }
-                            Session::set("loginMessage", NULL);
-                        ?>
-                            <span>
-                        </span>
-                    </h3>
-                </div>
 
-                <div class="panel-body">
-                    <table class="table table-hover table-responsive">
-                        <thead>
-                        <tr>
-                            <th width="20%">#</th>
-                            <th width="20%">Name</th>
-                            <th width="20%">Email</th>
-                            <th width="20%">Action</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                            <?php
-                                $user = new User();
-                                $userData = $user->getUserData();
 
-                                if($userData):
-                                    $i = 0;
-                                    foreach ($userData as $sdata):
-                                        $i++;
-                            ?>
-                                <tr>
-                                    <th scope="row"><?php echo $i;?></th>
-                                    <td>
-                                        <?php  echo $sdata['name'];?>
-                                    </td>
-                                    <td>
-                                        <?php  echo $sdata['email'];?>
-                                    </td>
-                                    <td>
-                                        <a href="profile.php?id=<?php  echo $sdata['id'];?>" class="btn btn-info">VIEW</a>
-                                    </td>
-                                </tr>
-                            <?php endforeach; else: ?>
-                                <tr>
-                                    <td colspan="5">
-                                        <h2 class="text-danger text-capitalize">no uset data found</h2>
-                                    </td>
-                                </tr>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div><!--row-->
-    </div><!--container-->
-<?php  require 'footer.php' ;?>
+
